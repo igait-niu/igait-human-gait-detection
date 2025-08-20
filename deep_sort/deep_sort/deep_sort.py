@@ -118,5 +118,3 @@ class DeepSort(object):
         else:
             features = np.array([])
         return features
-
-

@@ -179,7 +179,7 @@ def main(args):
     # ## Save predictions as video
     height, width = gif_imgs[0].shape[0], gif_imgs[0].shape[1]
 
-    vide_save_path = os.path.join(args.output,'output.mp4')
+    vide_save_path = os.path.join(args.output,'/data/output.mp4')
     video = cv2.VideoWriter(vide_save_path,cv2.VideoWriter_fourcc(*'mp4v'), 25, (width,height))
 
     for image in gif_imgs:
@@ -202,7 +202,3 @@ if __name__=="__main__":
     args = parser.parse_args()
     
     main(args)
-
-
-
-

@@ -11,10 +11,20 @@ from torchvision.transforms._functional_video import normalize
 from pytorchvideo.data.ava import AvaLabeledVideoFramePaths
 from pytorchvideo.models.hub import slowfast_r50_detection
 from deep_sort.deep_sort import DeepSort
+from pathlib import Path
+import sys
 
+# from ultralytics import YOLO
 
 class MyVideoCapture:
-    
+    """
+    Wrapper around cv2.VideoCapture, used for 
+    - Reads frames (read()).
+    - Stores frames (stack).
+    - Converts frames to PyTorch tensors (to_tensor).
+    - Bundles frames into a clip for action recognition (get_video_clip).
+    - Releases the video stream (release).
+    """
     def __init__(self, source):
         self.cap = cv2.VideoCapture(source)
         self.idx = -1
@@ -58,6 +68,10 @@ def ava_inference_transform(
     data_std = [0.225, 0.225, 0.225],
     slow_fast_alpha = 4, #if using slowfast_r50_detection, change this to 4, None for slow
 ):
+    """
+    Prepares a video clip for the SlowFast action recognition model
+    """
+    
     boxes = np.array(boxes)
     roi_boxes = boxes.copy()
     clip = uniform_temporal_subsample(clip, num_frames)
@@ -80,7 +94,9 @@ def ava_inference_transform(
 
 def plot_one_box(x, img, color=[100,100,100], text_info="None",
                  velocity=None, thickness=1, fontsize=0.5, fontthickness=1):
-    # Plots one bounding box on image img
+    """
+    Plots one bounding box on image img, and overlays a readable text label on top
+    """
     c1, c2 = (int(x[0]), int(x[1])), (int(x[2]), int(x[3]))
     cv2.rectangle(img, c1, c2, color, thickness, lineType=cv2.LINE_AA)
     t_size = cv2.getTextSize(text_info, cv2.FONT_HERSHEY_TRIPLEX, fontsize , fontthickness+2)[0]
@@ -90,10 +106,16 @@ def plot_one_box(x, img, color=[100,100,100], text_info="None",
     return img
 
 def deepsort_update(Tracker, pred, xywh, np_img):
+    """
+    Wwrapper around the DeepSORT tracker that updates tracked objects in a video frame
+    """
     outputs = Tracker.update(xywh, pred[:,4:5],pred[:,5].tolist(),cv2.cvtColor(np_img,cv2.COLOR_BGR2RGB))
     return outputs
 
 def save_yolopreds_tovideo(yolo_preds, id_to_ava_labels, color_map, output_video, vis=False):
+    """
+    Draws YOLO detections and action labels on each frame and saves them to a video
+    """
     for i, (im, pred) in enumerate(zip(yolo_preds.ims, yolo_preds.pred)):
         im=cv2.cvtColor(im,cv2.COLOR_BGR2RGB)
         if pred.shape[0]:
@@ -113,11 +135,30 @@ def save_yolopreds_tovideo(yolo_preds, id_to_ava_labels, color_map, output_video
             im=cv2.cvtColor(im,cv2.COLOR_RGB2BGR)
             cv2.imshow("demo", im)
 
+def check_one_person_walking(pred, id_to_ava_labels):
+    """
+    Identifys if a single person is walking in a video
+    """
+    person_count = sum(1 for (*_, cls, _, _, _) in pred if int(cls) == 0)
+    if person_count != 1:
+        return False
+        
+    # For the one person, check if they are walking
+    for (*_, cls, trackid, _, _) in pred:
+        if int(cls) == 0:  # This is the one person
+            if trackid in id_to_ava_labels:
+                action = id_to_ava_labels[trackid].split(' ')[0]
+                return action == 'walk'
+    return False
+
 def main(config):
     device = config.device
     imsize = config.imsize
-    
-    model = torch.hub.load('ultralytics/yolov5', 'yolov5l6').to(device)
+
+    detect_walk_only = (getattr(config, "mode", "full") == "walk")
+    max_seconds = getattr(config, "max_seconds", None)
+      
+    model = torch.hub.load('ultralytics/yolov5', 'yolov5l6').to(device) 
     model.conf = config.conf
     model.iou = config.iou
     model.max_det = 100
@@ -140,10 +181,18 @@ def main(config):
     cap = MyVideoCapture(config.input)
     id_to_ava_labels = {}
     a=time.time()
+    one_person_walking = False
+    
     while not cap.end:
         ret, img = cap.read()
         if not ret:
             continue
+
+        # Limit processing time
+        if max_seconds is not None and cap.idx / 25 >= max_seconds:
+            print(f"Reached max processing time of {max_seconds} seconds.")
+            break
+
         yolo_preds=model([img], size=imsize)
         yolo_preds.files=["img.jpg"]
         
@@ -172,18 +221,34 @@ def main(config):
                 for tid,avalabel in zip(yolo_preds.pred[0][:,5].tolist(), np.argmax(slowfaster_preds, axis=1).tolist()):
                     id_to_ava_labels[tid] = ava_labelnames[avalabel+1]
                 
+        # Check if we have one person walking in this frame
+        if len(yolo_preds.pred) > 0 and len(yolo_preds.pred[0]) > 0:
+            print("Person walking detected!")
+            one_person_walking = check_one_person_walking(yolo_preds.pred[0], id_to_ava_labels)
+            # Return early if found and in walk mode
+            if one_person_walking and detect_walk_only:
+                sys.exit(0)
+        
         save_yolopreds_tovideo(yolo_preds, id_to_ava_labels, coco_color_map, outputvideo, config.show)
-    print("total cost: {:.3f} s, video length: {} s".format(time.time()-a, cap.idx / 25))
+    
+    print("Total cost: {:.3f} s, video length: {} s".format(time.time()-a, cap.idx / 25))
     
     cap.release()
     outputvideo.release()
-    print('saved video to:', vide_save_path)
+    print('Saved video to:', vide_save_path)
     
-    
+    # Return whether we detected one person walking in the video
+    if one_person_walking:
+        print("Person walking detected")
+        sys.exit(0)
+    else:
+        print("Person walking not detected")
+        sys.exit(1)
+
 if __name__=="__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--input', type=str, default="/home/wufan/images/video/vad.mp4", help='test imgs folder or video or camera')
-    parser.add_argument('--output', type=str, default="output.mp4", help='folder to save result imgs, can not use input folder')
+    parser.add_argument('--output', type=str, default="/output/output.mp4", help='folder to save result imgs, can not use input folder')
     # object detect config
     parser.add_argument('--imsize', type=int, default=640, help='inference size (pixels)')
     parser.add_argument('--conf', type=float, default=0.4, help='object confidence threshold')
@@ -191,11 +256,14 @@ if __name__=="__main__":
     parser.add_argument('--device', default='cuda', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--classes', nargs='+', type=int, help='filter by class: --class 0, or --class 0 2 3')
     parser.add_argument('--show', action='store_true', help='show img')
+    # different mode config
+    parser.add_argument('--max-seconds', type=int, default=None, help='Maximum number of seconds to process from the video')
+    parser.add_argument('--mode', type=str, default='full', choices=['full', 'walk'], help='Run mode: "full" for normal, "walk" for human walking detection only')
     config = parser.parse_args()
-    
+
     if config.input.isdigit():
         print("using local camera.")
         config.input = int(config.input)
-        
+
     print(config)
     main(config)
