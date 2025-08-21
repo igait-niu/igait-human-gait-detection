@@ -28,8 +28,6 @@ deep_sort/deep_sort/deep/checkpoint/
 # Data & Outputs
 # ==========================
 output/
-data/
-*.mp4
 *.avi
 *.mkv
 *.mov
