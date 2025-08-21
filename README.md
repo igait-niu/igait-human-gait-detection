@@ -2,7 +2,7 @@
 
 <img src="./person_walking.gif"/>
 
-Detection service for determining whether a video contains **exactly one person walking**.
+Detection service for determining whether a video contains **exactly one person walking**. This is a YOLO + SlowFast + DeepSORT pipeline that detects people in a video, tracks them, recognizes their actions, and outputs a processed video while also checking if exactly one person is walking.
 
 **Return values:**
 
