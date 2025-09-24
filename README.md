@@ -16,7 +16,7 @@ Detection service for determining whether a video contains **exactly one person 
 ### 1. Clone Repository
 
 ```bash
-git clone https://github.com/michaelslice/igait-human-gait-detection.git
+git clone https://github.com/igait-niu/igait-human-gait-detection.git
 cd igait-human-gait-detection
 ```
 
