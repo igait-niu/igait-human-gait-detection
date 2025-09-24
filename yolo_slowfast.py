@@ -14,8 +14,6 @@ from deep_sort.deep_sort import DeepSort
 from pathlib import Path
 import sys
 
-# from ultralytics import YOLO
-
 class MyVideoCapture:
     """
     Wrapper around cv2.VideoCapture, used for 

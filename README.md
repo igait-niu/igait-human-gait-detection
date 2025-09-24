@@ -20,28 +20,36 @@ git clone https://github.com/michaelslice/igait-human-gait-detection.git
 cd igait-human-gait-detection
 ```
 
-### 2. Prepare Input Folder
+### 2. Download Model Weights
 
-Create a `data/` folder and copy your input files:
+Use the provided script to automatically download all required model weights:
 
 ```bash
-mkdir data
-cp <PATH_TO_DATA_FOLDER>/* data/
+# Make script executable if needed
+chmod +x download_weights.sh
+
+# Run the download script
+./download_weights.sh
 ```
 
-### 3. Setup Model Weights
+This script will:
+- Create the necessary directory structure
+- Download YOLOv5 and SlowFast model weights
+- Copy DeepSort parameters if available
+- Verify successful downloads
 
-Download the model weights from [Google Drive](https://drive.google.com/drive/folders/18I0CykECZOG6NUEF-JubJBTHXOKJz3qM?usp=drive_link) and place them in `weights/`:
+### 3. Prepare Input Folder
+
+Copy your input video files to the data folder that was created by the download script:
 
 ```bash
-mkdir weights
-cp <PATH_TO_WEIGHTS_FOLDER>/* weights/
+cp <PATH_TO_YOUR_VIDEOS>/* data/
 ```
 
 ### 4. Build Docker Image
 
 ```bash
-docker build -t igait-human-gait-detection .
+docker build -t igait-human-gait -f Dockerfile .
 ```
 
 ---
@@ -50,9 +58,11 @@ docker build -t igait-human-gait-detection .
 
 ```bash
 docker run -it --gpus all \
-  -v $(pwd)/data:/data \
+  -v $(pwd)/model_weights/torch/hub/checkpoints:/root/.cache/torch/hub/checkpoints \
+  -v $(pwd)/model_weights/deep_sort/deep_sort/deep/checkpoint:/app/deep_sort/deep_sort/deep/checkpoint \
+  -v $(pwd)/data:/files \
   -v $(pwd)/output:/output \
-  igait-human-gait-detection \
+  igait-human-gait \
   python3 yolo_slowfast.py [OPTIONS]
 ```
 
@@ -79,11 +89,13 @@ docker run -it --gpus all \
 
 ```bash
 docker run -it --gpus all \
-  -v $(pwd)/data:/data \
+  -v $(pwd)/model_weights/torch/hub/checkpoints:/root/.cache/torch/hub/checkpoints \
+  -v $(pwd)/model_weights/deep_sort/deep_sort/deep/checkpoint:/app/deep_sort/deep_sort/deep/checkpoint \
+  -v $(pwd)/data:/files \
   -v $(pwd)/output:/output \
-  igait-human-gait-detection \
+  igait-human-gait \
   python3 yolo_slowfast.py \
-    --input /data/person_walking.mp4 \
+    --input /files/person_walking.mp4 \
     --output /output/processed_person_walking.mp4
 ```
 
@@ -91,11 +103,13 @@ docker run -it --gpus all \
 
 ```bash
 docker run -it --gpus all \
-  -v $(pwd)/data:/data \
+  -v $(pwd)/model_weights/torch/hub/checkpoints:/root/.cache/torch/hub/checkpoints \
+  -v $(pwd)/model_weights/deep_sort/deep_sort/deep/checkpoint:/app/deep_sort/deep_sort/deep/checkpoint \
+  -v $(pwd)/data:/files \
   -v $(pwd)/output:/output \
-  igait-human-gait-detection \
+  igait-human-gait \
   python3 yolo_slowfast.py \
-    --input /data/person_walking.mp4 \
+    --input /files/person_walking.mp4 \
     --output /output/walking_only.mp4 \
     --mode walk \
     --max-seconds 60
@@ -111,11 +125,13 @@ docker run -it --gpus all \
 
 ```bash
 (docker run -it --gpus all \
-  -v $(pwd)/data:/data \
+  -v $(pwd)/model_weights/torch/hub/checkpoints:/root/.cache/torch/hub/checkpoints \
+  -v $(pwd)/model_weights/deep_sort/deep_sort/deep/checkpoint:/app/deep_sort/deep_sort/deep/checkpoint \
+  -v $(pwd)/data:/files \
   -v $(pwd)/output:/output \
-  igait-human-gait-detection \
+  igait-human-gait \
   python3 yolo_slowfast.py \
-    --input /data/person_walking.mp4 \
+    --input /files/person_walking.mp4 \
     --output /output/out.mp4 \
     --max-seconds 60); echo $?
 ```
@@ -129,9 +145,11 @@ docker run -it --gpus all \
 
 ```bash
 docker run --gpus all \
-  -v $(pwd)/data:/data \
-  igait-video-precheck \
-  python3 validate_user.py /data/<VIDEO_FILE> --model KP --type video
+  -v $(pwd)/model_weights/torch/hub/checkpoints:/root/.cache/torch/hub/checkpoints \
+  -v $(pwd)/model_weights/deep_sort/deep_sort/deep/checkpoint:/app/deep_sort/deep_sort/deep/checkpoint \
+  -v $(pwd)/data:/files \
+  igait-human-gait \
+  python3 validate_user.py /files/<VIDEO_FILE> --model KP --type video
 ```
 
 * **Output:**
