@@ -159,6 +159,140 @@ docker run --gpus all \
 
 ---
 
+# Converting and Running on Metis
+
+1. Pull the Docker Image
+```sh
+docker pull ghcr.io/igait-niu/igait-human-gait-detection:latest
+```
+2. Save the Docker Image as a Tarball
+```sh
+docker save -o igait-human-gait-detection.tar ghcr.io/igait-niu/igait-human-gait-detection:latest
+```
+3. Convert Docker Tarball to Apptainer Image
+```sh
+apptainer build igait-human-gait-detection.sif docker-archive://igait-human-gait-detection.tar
+```
+4. Transfer the Image to Metis
+```sh
+# If you already built the .sif
+scp igait-human-gait-detection.sif your_zid@metis.niu.edu:/path/to/project/
+
+# OR transfer the .tar if you’ll build on Metis
+scp igait-human-gait-detection.tar your_zid@metis.niu.edu:/path/to/project/
+```
+Then, on Metis, if needed, build the .sif:
+```sh
+apptainer build igait-human-gait-detection.sif docker-archive://igait-human-gait-detection.tar
+```
+5. Run the Apptainer Image with Model Weights Binded
+Below is an example command for running the igait-human-gait.sif Apptainer image on the Metis cluster, using GPU acceleration and bound data directories.
+```sh
+apptainer run --nv \
+  --bind /etc/ssl/certs:/etc/ssl/certs \
+  --bind /etc/pki:/etc/pki \
+  --bind $(pwd)/model_weights/torch/hub:/root/.cache/torch/hub \
+  --bind $(pwd)/model_weights/deep_sort/deep_sort/deep/checkpoint:/app/deep_sort/deep_sort/deep/checkpoint \
+  --bind $(pwd)/data:/files \
+  --bind $(pwd)/output:/output \
+  igait-human-gait.sif \
+  python3 yolo_slowfast.py \
+    --input /files/person_walking.mp4 \
+    --output /output/walking_only.mp4 \
+    --mode walk \
+    --max-seconds 60; echo $?
+```
+
+---
+
+## Command Breakdown
+
+### `apptainer run --nv`
+
+* **`apptainer run`** executes the container’s default runtime environment.
+* **`--nv`** enables **NVIDIA GPU support**, automatically binding CUDA libraries from the host system so the container can use the GPU.
+
+  * Required for PyTorch, CUDA, or TensorRT workloads.
+
+---
+
+### `--bind <host_path>:<container_path>`
+
+Each `--bind` flag mounts a directory or file from the host system into the container.
+This allows your container to access external data, model weights, certificates, or output directories.
+
+| Bind Mount                                                                                          | Purpose                                                                                                          |
+| --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `/etc/ssl/certs:/etc/ssl/certs`                                                                     | Gives the container access to host SSL certificates — needed for HTTPS requests (e.g., PyTorch model downloads). |
+| `/etc/pki:/etc/pki`                                                                                 | Additional SSL certificates (CentOS/RHEL systems).                                                               |
+| `$(pwd)/model_weights/torch/hub:/root/.cache/torch/hub`                                             | Mounts pretrained model weights for YOLO or SlowFast.                                                            |
+| `$(pwd)/model_weights/deep_sort/deep_sort/deep/checkpoint:/app/deep_sort/deep_sort/deep/checkpoint` | Mounts the DeepSORT checkpoint directory used for object tracking.                                               |
+| `$(pwd)/data:/files`                                                                                | Mounts local data directory containing input videos.                                                             |
+| `$(pwd)/output:/output`                                                                             | Mounts a local output directory for saving processed results.                                                    |
+
+> `$(pwd)` dynamically inserts your **current working directory**, making the command portable without hardcoded paths.
+
+---
+
+### `igait-human-gait.sif`
+
+This is your **Apptainer image file** — a self-contained environment that includes:
+
+* CUDA & cuDNN runtime
+* PyTorch
+* YOLO + SlowFast + DeepSORT code and dependencies
+
+It behaves like a lightweight virtual machine dedicated to your application.
+
+---
+
+### `python3 yolo_slowfast.py`
+
+Specifies the **entry command** to run inside the container.
+You can replace this with any other Python script or command (e.g., `python3 demo.py` or `bash`).
+
+---
+
+### Script Arguments
+
+| Argument                            | Description                                                                            |
+| ----------------------------------- | -------------------------------------------------------------------------------------- |
+| `--input /files/person_walking.mp4` | Input video path inside the container (mapped from your local `data/` directory).      |
+| `--output /output/walking_only.mp4` | Output file path inside the container (will appear in your local `output/` directory). |
+| `--mode walk`                       | Custom script parameter (sets mode to walking detection).                              |
+| `--max-seconds 60`                  | Limits video processing to the first 60 seconds.                                       |
+
+---
+
+### `; echo $?`
+
+This prints the **exit status code** of the last command:
+
+* `0` = success
+* Nonzero = error occurred
+
+Useful for batch scripts or job monitoring on HPC systems.
+
+---
+
+## General Template
+
+You can adapt this pattern for any container and dataset:
+
+```bash
+apptainer run --nv \
+  --bind /path/to/weights:/app/weights \
+  --bind /path/to/data:/app/data \
+  --bind /path/to/output:/app/output \
+  your-container.sif \
+  python3 your_script.py \
+    --input /app/data/input.mp4 \
+    --output /app/output/result.mp4 \
+    [additional args]
+```
+
+---
+
 ## Resources
 
 * [Detectron2](https://github.com/facebookresearch/detectron2) – Framework powering the models
