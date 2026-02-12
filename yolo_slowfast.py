@@ -115,7 +115,7 @@ def save_yolopreds_tovideo(yolo_preds, id_to_ava_labels, color_map, output_video
     Draws YOLO detections and action labels on each frame and saves them to a video
     """
     for i, (im, pred) in enumerate(zip(yolo_preds.ims, yolo_preds.pred)):
-        im=cv2.cvtColor(im,cv2.COLOR_BGR2RGB)
+        im = im.copy()
         if pred.shape[0]:
             for j, (*box, cls, trackid, vx, vy) in enumerate(pred):
                 if int(cls) != 0:
@@ -130,7 +130,6 @@ def save_yolopreds_tovideo(yolo_preds, id_to_ava_labels, color_map, output_video
         im = im.astype(np.uint8)
         output_video.write(im)
         if vis:
-            im=cv2.cvtColor(im,cv2.COLOR_RGB2BGR)
             cv2.imshow("demo", im)
 
 def check_one_person_walking(pred, id_to_ava_labels):
@@ -173,8 +172,12 @@ def main(config):
     vide_save_path = config.output
     video=cv2.VideoCapture(config.input)
     width,height = int(video.get(3)),int(video.get(4))
+    fps = video.get(cv2.CAP_PROP_FPS)
+    if fps <= 0:
+        fps = 25  # Fallback if FPS cannot be determined
     video.release()
-    outputvideo = cv2.VideoWriter(vide_save_path,cv2.VideoWriter_fourcc(*'mp4v'), 25, (width,height))
+    clip_len = int(fps)  # Number of frames per 1-second clip
+    outputvideo = cv2.VideoWriter(vide_save_path,cv2.VideoWriter_fourcc(*'mp4v'), fps, (width,height))
     print("processing...")
     
     cap = MyVideoCapture(config.input)
@@ -192,7 +195,7 @@ def main(config):
             continue
 
         # Limit processing time
-        if max_seconds is not None and cap.idx / 25 >= max_seconds:
+        if max_seconds is not None and cap.idx / fps >= max_seconds:
             print(f"Reached max processing time of {max_seconds} seconds.")
             break
 
@@ -208,8 +211,8 @@ def main(config):
             
         yolo_preds.pred=deepsort_outputs
         
-        if len(cap.stack) == 25:
-            print(f"processing {cap.idx // 25}th second clips")
+        if len(cap.stack) == clip_len:
+            print(f"processing {cap.idx // clip_len}th second clips")
             clip = cap.get_video_clip()
             clips_processed += 1
             if yolo_preds.pred[0].shape[0]:
@@ -230,12 +233,12 @@ def main(config):
             person_count = sum(1 for (*_, cls, _, _, _) in yolo_preds.pred[0] if int(cls) == 0)
             if person_count > 0:
                 human_detected = True
-                if cap.idx % 25 == 0:
+                if cap.idx % clip_len == 0:
                     clips_with_person += 1
             frame_walking = check_one_person_walking(yolo_preds.pred[0], id_to_ava_labels)
             if frame_walking:
                 one_person_walking = True
-                if cap.idx % 25 == 0:
+                if cap.idx % clip_len == 0:
                     clips_with_walking += 1
                 print(f"Walking detected at frame {cap.idx}")
             # Return early if found and in walk mode
@@ -249,7 +252,7 @@ def main(config):
     
     processing_time = time.time() - a
     total_frames = cap.idx + 1
-    print("Total cost: {:.3f} s, video length: {} s".format(processing_time, cap.idx / 25))
+    print("Total cost: {:.3f} s, video length: {} s".format(processing_time, cap.idx / fps))
     
     cap.release()
     outputvideo.release()
