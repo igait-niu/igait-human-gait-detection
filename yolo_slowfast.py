@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-import os,cv2,time,torch,random,pytorchvideo,warnings,argparse,math
+import os,cv2,time,torch,random,pytorchvideo,warnings,argparse,math,json
 warnings.filterwarnings("ignore",category=UserWarning)
 
 from pytorchvideo.transforms.functional import (
@@ -155,7 +155,8 @@ def main(config):
 
     detect_walk_only = (getattr(config, "mode", "full") == "walk")
     max_seconds = getattr(config, "max_seconds", None)
-      
+    output_json_path = getattr(config, "output_json", None)
+
     model = torch.hub.load('ultralytics/yolov5', 'yolov5l6').to(device) 
     model.conf = config.conf
     model.iou = config.iou
@@ -180,6 +181,10 @@ def main(config):
     id_to_ava_labels = {}
     a=time.time()
     one_person_walking = False
+    human_detected = False
+    clips_processed = 0
+    clips_with_person = 0
+    clips_with_walking = 0
     
     while not cap.end:
         ret, img = cap.read()
@@ -206,6 +211,7 @@ def main(config):
         if len(cap.stack) == 25:
             print(f"processing {cap.idx // 25}th second clips")
             clip = cap.get_video_clip()
+            clips_processed += 1
             if yolo_preds.pred[0].shape[0]:
                 inputs, inp_boxes, _=ava_inference_transform(clip, yolo_preds.pred[0][:,0:4], crop_size=imsize)
                 inp_boxes = torch.cat([torch.zeros(inp_boxes.shape[0],1), inp_boxes], dim=1)
@@ -218,22 +224,41 @@ def main(config):
                     slowfaster_preds = slowfaster_preds.cpu()
                 for tid,avalabel in zip(yolo_preds.pred[0][:,5].tolist(), np.argmax(slowfaster_preds, axis=1).tolist()):
                     id_to_ava_labels[tid] = ava_labelnames[avalabel+1]
-                
-        # Check if we have one person walking in this frame
+
+        # Track person detection and walking status
         if len(yolo_preds.pred) > 0 and len(yolo_preds.pred[0]) > 0:
-            print("Person walking detected!")
-            one_person_walking = check_one_person_walking(yolo_preds.pred[0], id_to_ava_labels)
+            person_count = sum(1 for (*_, cls, _, _, _) in yolo_preds.pred[0] if int(cls) == 0)
+            if person_count > 0:
+                human_detected = True
+                if cap.idx % 25 == 0:
+                    clips_with_person += 1
+            frame_walking = check_one_person_walking(yolo_preds.pred[0], id_to_ava_labels)
+            if frame_walking:
+                one_person_walking = True
+                if cap.idx % 25 == 0:
+                    clips_with_walking += 1
+                print(f"Walking detected at frame {cap.idx}")
             # Return early if found and in walk mode
             if one_person_walking and detect_walk_only:
+                _write_validity_json(output_json_path, True, human_detected, True,
+                                     cap.idx + 1, clips_processed, clips_with_person,
+                                     clips_with_walking, time.time() - a)
                 sys.exit(0)
         
         save_yolopreds_tovideo(yolo_preds, id_to_ava_labels, coco_color_map, outputvideo, config.show)
     
-    print("Total cost: {:.3f} s, video length: {} s".format(time.time()-a, cap.idx / 25))
+    processing_time = time.time() - a
+    total_frames = cap.idx + 1
+    print("Total cost: {:.3f} s, video length: {} s".format(processing_time, cap.idx / 25))
     
     cap.release()
     outputvideo.release()
     print('Saved video to:', vide_save_path)
+    
+    # Write validity JSON results
+    _write_validity_json(output_json_path, one_person_walking, human_detected,
+                         one_person_walking, total_frames, clips_processed,
+                         clips_with_person, clips_with_walking, processing_time)
     
     # Return whether we detected one person walking in the video
     if one_person_walking:
@@ -242,6 +267,26 @@ def main(config):
     else:
         print("Person walking not detected")
         sys.exit(1)
+
+def _write_validity_json(path, valid, human_detected, walking_detected,
+                         total_frames, clips_processed, clips_with_person,
+                         clips_with_walking, processing_time):
+    """Write structured validity results to a JSON file."""
+    if path is None:
+        return
+    result = {
+        "valid": valid,
+        "human_detected": human_detected,
+        "walking_detected": walking_detected,
+        "total_frames": total_frames,
+        "clips_processed": clips_processed,
+        "clips_with_person": clips_with_person,
+        "clips_with_walking": clips_with_walking,
+        "processing_time_seconds": round(processing_time, 3),
+    }
+    with open(path, "w") as f:
+        json.dump(result, f, indent=2)
+    print(f"Validity results written to: {path}")
 
 if __name__=="__main__":
     parser = argparse.ArgumentParser()
@@ -257,6 +302,7 @@ if __name__=="__main__":
     # different mode config
     parser.add_argument('--max-seconds', type=int, default=None, help='Maximum number of seconds to process from the video')
     parser.add_argument('--mode', type=str, default='full', choices=['full', 'walk'], help='Run mode: "full" for normal, "walk" for human walking detection only')
+    parser.add_argument('--output-json', type=str, default=None, dest='output_json', help='Path to write validity results JSON')
     config = parser.parse_args()
 
     if config.input.isdigit():
