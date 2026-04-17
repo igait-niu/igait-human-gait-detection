@@ -22,7 +22,8 @@ env/
 *.pt
 *.pth
 *.onnx
-deep_sort/deep_sort/deep/checkpoint/
+*.task
+models/
 
 # ==========================
 # Data & Outputs
