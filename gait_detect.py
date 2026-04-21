@@ -47,7 +47,6 @@ REQUIRED_LANDMARKS = (
     LEFT_ANKLE, RIGHT_ANKLE,
 )
 
-
 def ensure_model(path: str) -> str:
     """Download the MediaPipe pose landmarker model if it is not already cached."""
     if os.path.exists(path):

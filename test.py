@@ -1,6 +1,6 @@
 import os
 import subprocess
-
+import sys
 
 def main():
     print("Running tests!\n")
@@ -20,7 +20,7 @@ def main():
         summary = os.path.join(output_dir, f"{stem}.json")
 
         command = [
-            "python3", "gait_detect.py",
+            sys.executable, "gait_detect.py",
             "--input", full_path,
             "--output", annotated,
             "--output-json", summary,
