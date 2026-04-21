@@ -1,37 +1,48 @@
 import os
 import subprocess
+import sys
 
 def main():
     print("Running tests!\n")
-    
-    files = []
-    directory_path = os.path.abspath("./data")  
 
-    for entry in os.listdir(directory_path):
+    directory_path = os.path.abspath("./data")
+    output_dir = os.path.abspath("./output")
+    os.makedirs(output_dir, exist_ok=True)
+
+    results = []
+    for entry in sorted(os.listdir(directory_path)):
         full_path = os.path.join(directory_path, entry)
-        
-        if os.path.isfile(full_path):            
-            
-            command = ["python3", "yolo_slowfast.py", "--input", full_path, "--output", f"data/{full_path}"]
+        if not os.path.isfile(full_path):
+            continue
 
-            print(f"\nProcessing File: {entry}")
-            try:
-                result = subprocess.run(command, capture_output=True, text=True, check=True)
-                print(result.stdout)
-                print(f"Return Code: {result.returncode}")
-                print("Success\n")
-    
-            except subprocess.CalledProcessError as e:
-                print(f"Command failed with exit code {e.returncode}")
-                print(f"Error output:\n{e.stderr}")
-            except FileNotFoundError:
-                print(f"Error: Command '{command[0]}' not found.")
-            except Exception as e:
-                print(f"Unexpected error: {e}")
+        stem, _ = os.path.splitext(entry)
+        annotated = os.path.join(output_dir, f"{stem}_annotated.mp4")
+        summary = os.path.join(output_dir, f"{stem}.json")
 
-            files.append(full_path)
-    
-    return files
+        command = [
+            sys.executable, "gait_detect.py",
+            "--input", full_path,
+            "--output", annotated,
+            "--output-json", summary,
+        ]
+
+        print(f"\nProcessing file: {entry}")
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, check=False)
+            print(result.stdout)
+            if result.returncode != 0 and result.stderr:
+                print(result.stderr)
+            print(f"Return code: {result.returncode}")
+        except FileNotFoundError:
+            print(f"Error: command '{command[0]}' not found.")
+        except Exception as exc:
+            print(f"Unexpected error: {exc}")
+            continue
+
+        results.append((full_path, result.returncode))
+
+    return results
+
 
 if __name__ == "__main__":
     main()

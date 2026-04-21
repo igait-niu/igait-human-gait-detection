@@ -2,299 +2,186 @@
 
 <img src="./person_walking.gif"/>
 
-Detection service for determining whether a video contains **exactly one person walking**. This is a YOLO + SlowFast + DeepSORT pipeline that detects people in a video, tracks them, recognizes their actions, and outputs a processed video while also checking if exactly one person is walking.
+MediaPipe-based detection service that inspects a video and determines whether:
 
-**Return values:**
+1. At least one human is present.
+2. More than one human appears at any point (returned as a flag).
+3. At least one human is walking.
 
-* `0` → Video contains **one person walking**
-* `1` → Video does **not** contain exactly one person
+The pipeline uses the [MediaPipe Pose Landmarker](https://developers.google.com/mediapipe/solutions/vision/pose_landmarker)
+task model for multi-person pose estimation on CPU, then derives walking motion
+from ankle oscillation and hip translation in normalised body coordinates.
+
+**Exit codes:**
+
+* `0` — at least one human detected **and** at least one human walking.
+* `1` — the video is missing a human or is missing walking motion.
+* `2` — the input video could not be opened.
+
+The `multiple_humans_detected` field in the JSON summary is informational;
+it does **not** invalidate the result on its own.
 
 ---
 
 ## Setup
 
-### 1. Clone Repository
+### 1. Clone the repository
 
 ```bash
 git clone https://github.com/igait-niu/igait-human-gait-detection.git
 cd igait-human-gait-detection
 ```
 
-### 2. Download Model Weights
+### 2. Build the Docker image
 
-Use the provided script to automatically download all required model weights:
+The pose landmarker model (`pose_landmarker_full.task`) is fetched inside the
+image, so no separate weight-download step is required.
 
 ```bash
-# Make script executable if needed
-chmod +x download_weights.sh
-
-# Run the download script
-./download_weights.sh
+docker build -t igait-human-gait .
 ```
 
-This script will:
-- Create the necessary directory structure
-- Download YOLOv5 and SlowFast model weights
-- Copy DeepSort parameters if available
-- Verify successful downloads
+### 3. Prepare an input folder
 
-### 3. Prepare Input Folder
-
-Copy your input video files to the data folder that was created by the download script:
+Drop the video clips you want to inspect into `data/`:
 
 ```bash
 cp <PATH_TO_YOUR_VIDEOS>/* data/
 ```
 
-### 4. Build Docker Image
-
-```bash
-docker build -t igait-human-gait -f Dockerfile .
-```
-
 ---
 
-## Running YOLO + SlowFast Pipeline
+## Running the detector
 
 ```bash
-docker run -it --gpus all \
-  -v $(pwd)/model_weights/torch/hub/checkpoints:/root/.cache/torch/hub/checkpoints \
-  -v $(pwd)/model_weights/deep_sort/deep_sort/deep/checkpoint:/app/deep_sort/deep_sort/deep/checkpoint \
+docker run --rm \
   -v $(pwd)/data:/files \
   -v $(pwd)/output:/output \
   igait-human-gait \
-  python3 yolo_slowfast.py [OPTIONS]
+    --input /files/person_walking.mp4 \
+    --output /output/person_walking_annotated.mp4 \
+    --output-json /output/person_walking.json
 ```
 
 ### Arguments
 
-| Argument        | Type        | Default                            | Description                                                   |
-| --------------- | ----------- | ---------------------------------- | ------------------------------------------------------------- |
-| `--input`       | `str`       | `/home/wufan/images/video/vad.mp4` | Input video or folder                                         |
-| `--output`      | `str`       | `/output/output.mp4`               | Path for processed output                                     |
-| `--imsize`      | `int`       | `640`                              | Inference size (pixels) for YOLO                              |
-| `--conf`        | `float`     | `0.4`                              | Object detection confidence threshold                         |
-| `--iou`         | `float`     | `0.4`                              | IOU threshold for NMS                                         |
-| `--device`      | `str`       | `cuda`                             | Device to run on: `cpu`, `cuda`, or specific GPU(s)           |
-| `--classes`     | `list[int]` | `None`                             | Filter by YOLO class IDs (see below)                          |
-| `--show`        | `flag`      | `False`                            | Display video frames during processing                        |
-| `--max-seconds` | `int`       | `None`                             | Process only first N seconds of the video                     |
-| `--mode`        | `str`       | `full`                             | `"full"` = full YOLO+SlowFast, `"walk"` = detect walking only |
+| Argument           | Type    | Default                         | Description                                                                                 |
+| ------------------ | ------- | ------------------------------- | ------------------------------------------------------------------------------------------- |
+| `--input`          | `str`   | *(required)*                    | Path to the input video.                                                                    |
+| `--output`         | `str`   | `None`                          | Optional path for an annotated output video (skeleton overlay + status banner).             |
+| `--output-json`    | `str`   | `None`                          | Optional path for a JSON summary of the run.                                                |
+| `--model`          | `str`   | `models/pose_landmarker.task`   | Override the pose landmarker model path. Auto-downloaded to `models/` on first run locally. |
+| `--max-poses`      | `int`   | `5`                             | Maximum number of poses detected per frame (controls the multi-person flag sensitivity).    |
+| `--conf`           | `float` | `0.5`                           | Minimum pose detection and presence confidence.                                             |
+| `--min-visibility` | `float` | `0.5`                           | Minimum landmark visibility before a frame contributes to walking analysis.                 |
+| `--max-seconds`    | `float` | `None`                          | Process only the first *N* seconds of the video.                                            |
 
----
-
-## Example Usage
-
-**Full pipeline on a video:**
+### Example: first 60 seconds only
 
 ```bash
-docker run -it --gpus all \
-  -v $(pwd)/model_weights/torch/hub/checkpoints:/root/.cache/torch/hub/checkpoints \
-  -v $(pwd)/model_weights/deep_sort/deep_sort/deep/checkpoint:/app/deep_sort/deep_sort/deep/checkpoint \
+docker run --rm \
   -v $(pwd)/data:/files \
   -v $(pwd)/output:/output \
   igait-human-gait \
-  python3 yolo_slowfast.py \
     --input /files/person_walking.mp4 \
-    --output /output/processed_person_walking.mp4
-```
-
-**Walking detection only (first 60 seconds):**
-
-```bash
-docker run -it --gpus all \
-  -v $(pwd)/model_weights/torch/hub/checkpoints:/root/.cache/torch/hub/checkpoints \
-  -v $(pwd)/model_weights/deep_sort/deep_sort/deep/checkpoint:/app/deep_sort/deep_sort/deep/checkpoint \
-  -v $(pwd)/data:/files \
-  -v $(pwd)/output:/output \
-  igait-human-gait \
-  python3 yolo_slowfast.py \
-    --input /files/person_walking.mp4 \
-    --output /output/walking_only.mp4 \
-    --mode walk \
+    --output-json /output/person_walking.json \
     --max-seconds 60
 ```
 
-**Filter by classes (person + car + truck):**
+### Example: check the exit code
 
 ```bash
---classes 0 2 7
-```
-
-**Check exit code:**
-
-```bash
-(docker run -it --gpus all \
-  -v $(pwd)/model_weights/torch/hub/checkpoints:/root/.cache/torch/hub/checkpoints \
-  -v $(pwd)/model_weights/deep_sort/deep_sort/deep/checkpoint:/app/deep_sort/deep_sort/deep/checkpoint \
+(docker run --rm \
   -v $(pwd)/data:/files \
   -v $(pwd)/output:/output \
   igait-human-gait \
-  python3 yolo_slowfast.py \
-    --input /files/person_walking.mp4 \
-    --output /output/out.mp4 \
-    --max-seconds 60); echo $?
+    --input /files/person_walking.mp4); echo $?
 ```
 
-* `0` → Video contains exactly one person walking
-* `1` → Video does **not** contain exactly one person walking
+* `0` → video contains a human and walking motion.
+* `1` → human or walking missing.
 
 ---
 
-## Human Gait Detection Usage
+## JSON output schema
+
+When `--output-json` is supplied (or the summary is captured from stdout) the
+detector emits the following structure:
+
+```json
+{
+  "valid": true,
+  "human_detected": true,
+  "multiple_humans_detected": false,
+  "walking_detected": true,
+  "max_humans_in_frame": 1,
+  "total_frames": 425,
+  "frames_with_person": 418,
+  "frames_with_multiple_persons": 0,
+  "processing_time_seconds": 7.812
+}
+```
+
+* `valid` — `true` when `human_detected` **and** `walking_detected`.
+* `multiple_humans_detected` — informational flag; `true` if more than one pose
+  was detected in any single frame.
+
+---
+
+## Local (non-Docker) usage
 
 ```bash
-docker run --gpus all \
-  -v $(pwd)/model_weights/torch/hub/checkpoints:/root/.cache/torch/hub/checkpoints \
-  -v $(pwd)/model_weights/deep_sort/deep_sort/deep/checkpoint:/app/deep_sort/deep_sort/deep/checkpoint \
-  -v $(pwd)/data:/files \
-  igait-human-gait \
-  python3 validate_user.py /files/<VIDEO_FILE> --model KP --type video
+python3 -m pip install -r requirements.txt
+python3 gait_detect.py \
+  --input data/person_walking.mp4 \
+  --output output/person_walking_annotated.mp4 \
+  --output-json output/person_walking.json
 ```
 
-* **Output:**
-
-  * `0` → Video contains **exactly one person**
-  * `1` → Video does **not** contain exactly one person
-
----
-
-# Converting and Running on Metis
-
-1. Pull the Docker Image
-```sh
-docker pull ghcr.io/igait-niu/igait-human-gait-detection:latest
-```
-2. Save the Docker Image as a Tarball
-```sh
-docker save -o igait-human-gait-detection.tar ghcr.io/igait-niu/igait-human-gait-detection:latest
-```
-3. Convert Docker Tarball to Apptainer Image
-```sh
-apptainer build igait-human-gait-detection.sif docker-archive://igait-human-gait-detection.tar
-```
-4. Transfer the Image to Metis
-```sh
-# If you already built the .sif
-scp igait-human-gait-detection.sif your_zid@metis.niu.edu:/path/to/project/
-
-# OR transfer the .tar if you’ll build on Metis
-scp igait-human-gait-detection.tar your_zid@metis.niu.edu:/path/to/project/
-```
-Then, on Metis, if needed, build the .sif:
-```sh
-apptainer build igait-human-gait-detection.sif docker-archive://igait-human-gait-detection.tar
-```
-5. Run the Apptainer Image with Model Weights Binded
-Below is an example command for running the igait-human-gait.sif Apptainer image on the Metis cluster, using GPU acceleration and bound data directories.
-```sh
-apptainer run --nv \
-  --bind /etc/ssl/certs:/etc/ssl/certs \
-  --bind /etc/pki:/etc/pki \
-  --bind $(pwd)/model_weights/torch/hub:/root/.cache/torch/hub \
-  --bind $(pwd)/model_weights/deep_sort/deep_sort/deep/checkpoint:/app/deep_sort/deep_sort/deep/checkpoint \
-  --bind $(pwd)/data:/files \
-  --bind $(pwd)/output:/output \
-  igait-human-gait.sif \
-  python3 yolo_slowfast.py \
-    --input /files/person_walking.mp4 \
-    --output /output/walking_only.mp4 \
-    --mode walk \
-    --max-seconds 60; echo $?
-```
+On first run the script downloads `pose_landmarker_full.task` into
+`./models/pose_landmarker.task`. Set `POSE_MODEL_PATH` or pass `--model` to
+point at a cached copy.
 
 ---
 
-## Command Breakdown
-
-### `apptainer run --nv`
-
-* **`apptainer run`** executes the container’s default runtime environment.
-* **`--nv`** enables **NVIDIA GPU support**, automatically binding CUDA libraries from the host system so the container can use the GPU.
-
-  * Required for PyTorch, CUDA, or TensorRT workloads.
-
----
-
-### `--bind <host_path>:<container_path>`
-
-Each `--bind` flag mounts a directory or file from the host system into the container.
-This allows your container to access external data, model weights, certificates, or output directories.
-
-| Bind Mount                                                                                          | Purpose                                                                                                          |
-| --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `/etc/ssl/certs:/etc/ssl/certs`                                                                     | Gives the container access to host SSL certificates — needed for HTTPS requests (e.g., PyTorch model downloads). |
-| `/etc/pki:/etc/pki`                                                                                 | Additional SSL certificates (CentOS/RHEL systems).                                                               |
-| `$(pwd)/model_weights/torch/hub:/root/.cache/torch/hub`                                             | Mounts pretrained model weights for YOLO or SlowFast.                                                            |
-| `$(pwd)/model_weights/deep_sort/deep_sort/deep/checkpoint:/app/deep_sort/deep_sort/deep/checkpoint` | Mounts the DeepSORT checkpoint directory used for object tracking.                                               |
-| `$(pwd)/data:/files`                                                                                | Mounts local data directory containing input videos.                                                             |
-| `$(pwd)/output:/output`                                                                             | Mounts a local output directory for saving processed results.                                                    |
-
-> `$(pwd)` dynamically inserts your **current working directory**, making the command portable without hardcoded paths.
-
----
-
-### `igait-human-gait.sif`
-
-This is your **Apptainer image file** — a self-contained environment that includes:
-
-* CUDA & cuDNN runtime
-* PyTorch
-* YOLO + SlowFast + DeepSORT code and dependencies
-
-It behaves like a lightweight virtual machine dedicated to your application.
-
----
-
-### `python3 yolo_slowfast.py`
-
-Specifies the **entry command** to run inside the container.
-You can replace this with any other Python script or command (e.g., `python3 demo.py` or `bash`).
-
----
-
-### Script Arguments
-
-| Argument                            | Description                                                                            |
-| ----------------------------------- | -------------------------------------------------------------------------------------- |
-| `--input /files/person_walking.mp4` | Input video path inside the container (mapped from your local `data/` directory).      |
-| `--output /output/walking_only.mp4` | Output file path inside the container (will appear in your local `output/` directory). |
-| `--mode walk`                       | Custom script parameter (sets mode to walking detection).                              |
-| `--max-seconds 60`                  | Limits video processing to the first 60 seconds.                                       |
-
----
-
-### `; echo $?`
-
-This prints the **exit status code** of the last command:
-
-* `0` = success
-* Nonzero = error occurred
-
-Useful for batch scripts or job monitoring on HPC systems.
-
----
-
-## General Template
-
-You can adapt this pattern for any container and dataset:
+## Running a batch over `data/`
 
 ```bash
-apptainer run --nv \
-  --bind /path/to/weights:/app/weights \
-  --bind /path/to/data:/app/data \
-  --bind /path/to/output:/app/output \
-  your-container.sif \
-  python3 your_script.py \
-    --input /app/data/input.mp4 \
-    --output /app/output/result.mp4 \
-    [additional args]
+python3 test.py
 ```
+
+`test.py` iterates every file in `data/`, calls `gait_detect.py`, and drops an
+annotated video plus a JSON summary into `output/` per input.
+
+---
+
+## Running on Metis (Apptainer)
+
+1. Pull and export the image:
+
+   ```bash
+   docker pull ghcr.io/igait-niu/igait-human-gait-detection:latest
+   docker save -o igait-human-gait-detection.tar ghcr.io/igait-niu/igait-human-gait-detection:latest
+   apptainer build igait-human-gait-detection.sif docker-archive://igait-human-gait-detection.tar
+   ```
+
+2. Transfer the `.sif` (or the `.tar`) to Metis and run:
+
+   ```bash
+   apptainer run \
+     --bind $(pwd)/data:/files \
+     --bind $(pwd)/output:/output \
+     igait-human-gait-detection.sif \
+       --input /files/person_walking.mp4 \
+       --output /output/person_walking_annotated.mp4 \
+       --output-json /output/person_walking.json; echo $?
+   ```
+
+No `--nv` flag is required — the MediaPipe pose landmarker runs on CPU.
 
 ---
 
 ## Resources
 
-* [Detectron2](https://github.com/facebookresearch/detectron2) – Framework powering the models
-* [YOLOv5](https://github.com/ultralytics/yolov5) – Object detection
-* [PyTorchVideo SlowFast](https://pytorchvideo.org/) – Action recognition
+* [MediaPipe Pose Landmarker](https://developers.google.com/mediapipe/solutions/vision/pose_landmarker)
+* [BlazePose landmark reference](https://developers.google.com/mediapipe/solutions/vision/pose_landmarker#pose_landmarker_model)
